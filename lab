@@ -526,190 +526,124 @@ public interface MyServerIntf extends Remote		//remote interface
 	double add(double a, double b) throws RemoteException;
 }
 ................................................................................
-import java.awt.*;
-import java.awt.event.*;
-import javax.swing.*;
 import java.io.*;
 import java.net.*;
 
-public class TCPClient {
-    private JFrame frame;
-    private JTextField fileField;
-    private JTextArea textArea;
+public class TCPServer {
+
+    // XOR key for encryption/decryption (must be 16 bytes for AES)
+    private static final byte[] KEY = "simplekey1234567".getBytes();
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> new TCPClient().createAndShowGUI());
-    }
-
-    private void createAndShowGUI() {
-        frame = new JFrame("Client");
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setSize(400, 300);
-
-        JPanel panel = new JPanel(new GridLayout(3, 1));
-        frame.add(panel, BorderLayout.CENTER);
-
-        fileField = new JTextField();
-        panel.add(new JLabel("Enter file name:"));
-        panel.add(fileField);
-
-        textArea = new JTextArea();
-        textArea.setEditable(false);
-        panel.add(new JScrollPane(textArea));
-
-        JPanel buttonPanel = new JPanel();
-        JButton uploadButton = new JButton("Upload");
-        JButton downloadButton = new JButton("Download");
-
-        buttonPanel.add(uploadButton);
-        buttonPanel.add(downloadButton);
-
-        frame.add(buttonPanel, BorderLayout.SOUTH);
-
-        uploadButton.addActionListener(e -> uploadFile());
-        downloadButton.addActionListener(e -> downloadFile());
-
-        frame.setVisible(true);
-    }
-
-    private void uploadFile() {
-        String filename = fileField.getText();
-        if (filename.isEmpty()) {
-            textArea.append("Please enter a file name.\n");
+        // Check if the directory argument is provided
+        if (args.length < 1) {
+            System.out.println("Usage: java TCPServer <directory>");
             return;
         }
 
-        try (Socket s = new Socket("localhost", 4567);
-             DataOutputStream dos = new DataOutputStream(s.getOutputStream())) {
-            dos.writeUTF("upload");
-            dos.writeUTF(filename);
+        String directory = args[0];
 
-            File file = new File(filename);
-            if (!file.exists()) {
-                textArea.append("File not found: " + filename + "\n");
-                return;
+        try (ServerSocket serverSocket = new ServerSocket(5000)) {
+            System.out.println("Server is listening on port 5000");
+
+            // Continuously accept new client connections
+            while (true) {
+                try (Socket socket = serverSocket.accept();
+                     DataInputStream dis = new DataInputStream(socket.getInputStream())) {
+
+                    // Read file name and size from the client
+                    String fileName = dis.readUTF();
+                    long fileSize = dis.readLong();
+                    
+                    // Read the file content into a byte array
+                    byte[] fileContent = new byte[(int) fileSize];
+                    dis.readFully(fileContent);
+
+                    // Decrypt the file content
+                    byte[] decryptedContent = xorEncryptDecrypt(fileContent);
+
+                    // Save the decrypted content to a file
+                    try (FileOutputStream fos = new FileOutputStream(new File(directory, fileName))) {
+                        fos.write(decryptedContent);
+                    }
+
+                    System.out.println("File " + fileName + " received and saved.");
+                }
             }
-
-            byte[] data = new byte[(int) file.length()];
-            try (FileInputStream fis = new FileInputStream(file)) {
-                fis.read(data);
-            }
-
-            // Encrypt data using Caesar cipher
-            for (int i = 0; i < data.length; i++) {
-                data[i] = (byte) ((data[i] + 3) % 256);
-            }
-
-            dos.writeInt(data.length);
-            dos.write(data);
-            textArea.append("File uploaded: " + filename + "\n");
         } catch (IOException e) {
-            e.printStackTrace();
+            System.out.println("Error: " + e.getMessage());
         }
     }
 
-    private void downloadFile() {
-        String filename = fileField.getText();
-        if (filename.isEmpty()) {
-            textArea.append("Please enter a file name.\n");
-            return;
+    // XOR encryption/decryption method
+    private static byte[] xorEncryptDecrypt(byte[] data) {
+        byte[] result = new byte[data.length];
+        for (int i = 0; i < data.length; i++) {
+            result[i] = (byte) (data[i] ^ KEY[i % KEY.length]);
         }
-
-        try (Socket s = new Socket("localhost", 4567);
-             DataOutputStream dos = new DataOutputStream(s.getOutputStream());
-             DataInputStream dis = new DataInputStream(s.getInputStream())) {
-            dos.writeUTF("download");
-            dos.writeUTF(filename);
-
-            String response = dis.readUTF();
-            if (response.equalsIgnoreCase("OK")) {
-                int len = dis.readInt();
-                byte[] data = new byte[len];
-                dis.readFully(data);
-
-                // Decrypt data using Caesar cipher
-                for (int i = 0; i < data.length; i++) {
-                    data[i] = (byte) ((data[i] - 3 + 256) % 256);
-                }
-
-                try (FileOutputStream fos = new FileOutputStream(filename)) {
-                    fos.write(data);
-                }
-                textArea.append("File downloaded: " + filename + "\n");
-            } else {
-                textArea.append(response + "\n");
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        return result;
     }
 }
 .................................................................................................
 import java.io.*;
 import java.net.*;
 
-public class TCPServer {
+public class TCPClient {
+
+    // XOR key for encryption/decryption (must be 16 bytes for AES)
+    private static final byte[] KEY = "simplekey1234567".getBytes();
+
     public static void main(String[] args) {
-        try (ServerSocket ss = new ServerSocket(4567)) {
-            System.out.println("Server is running and waiting for clients...");
-            while (true) {
-                Socket s = ss.accept(); // Establishes connection and waits for the client
-                System.out.println("Client connected.");
+        // Check if the directory argument is provided
+        if (args.length < 1) {
+            System.out.println("Usage: java TCPClient <directory>");
+            return;
+        }
 
-                // Handling client interaction
-                new ClientHandler(s).start();
+        String directory = args[0];
+
+        try (Socket socket = new Socket("localhost", 5000);
+             DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
+             BufferedReader br = new BufferedReader(new InputStreamReader(System.in))) {
+
+            // Prompt user to enter the filename to upload
+            System.out.println("Enter the filename to upload:");
+            String fileName = br.readLine();
+            File file = new File(directory, fileName);
+
+            // Check if the file exists
+            if (!file.exists()) {
+                System.out.println("File not found.");
+                return;
             }
+
+            // Read the file content into a byte array
+            byte[] fileContent = new byte[(int) file.length()];
+            try (FileInputStream fis = new FileInputStream(file)) {
+                fis.read(fileContent);
+            }
+
+            // Encrypt the file content using XOR
+            byte[] encryptedContent = xorEncryptDecrypt(fileContent);
+
+            // Send file name, size, and encrypted content to the server
+            dos.writeUTF(fileName);
+            dos.writeLong(encryptedContent.length);
+            dos.write(encryptedContent);
+
+            System.out.println("File " + fileName + " sent to server.");
         } catch (IOException e) {
-            e.printStackTrace();
+            System.out.println("Error: " + e.getMessage());
         }
     }
-}
 
-class ClientHandler extends Thread {
-    private Socket socket;
-
-    ClientHandler(Socket socket) {
-        this.socket = socket;
-    }
-
-    public void run() {
-        try {
-            DataInputStream dis = new DataInputStream(socket.getInputStream());
-            DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
-
-            String command = dis.readUTF();
-            if (command.equalsIgnoreCase("upload")) {
-                String filename = dis.readUTF();
-                int len = dis.readInt();
-                byte[] data = new byte[len];
-                dis.readFully(data);
-
-                // Save encrypted data
-                try (FileOutputStream fos = new FileOutputStream(filename)) {
-                    fos.write(data);
-                    System.out.println("File uploaded: " + filename);
-                }
-            } else if (command.equalsIgnoreCase("download")) {
-                String filename = dis.readUTF();
-                File file = new File(filename);
-                if (file.exists()) {
-                    byte[] data = new byte[(int) file.length()];
-                    try (FileInputStream fis = new FileInputStream(file)) {
-                        fis.read(data);
-                    }
-
-                    dos.writeUTF("OK");
-                    dos.writeInt(data.length);
-                    dos.write(data);
-                } else {
-                    dos.writeUTF("ERROR: File not found");
-                }
-            }
-            socket.close();
-        } catch (IOException e) {
-            e.printStackTrace();
+    // XOR encryption/decryption method
+    private static byte[] xorEncryptDecrypt(byte[] data) {
+        byte[] result = new byte[data.length];
+        for (int i = 0; i < data.length; i++) {
+            result[i] = (byte) (data[i] ^ KEY[i % KEY.length]);
         }
+        return result;
     }
 }
-
 
